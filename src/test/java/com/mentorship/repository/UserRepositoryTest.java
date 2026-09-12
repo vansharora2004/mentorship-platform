@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.mentorship.entity.Role;
@@ -16,6 +17,7 @@ import jakarta.persistence.EntityManager;
 
 @SpringBootTest
 @Transactional
+@TestPropertySource(properties = "app.jwt.secret=test-secret-key-that-is-long-enough-for-hs256")
 class UserRepositoryTest {
 
 	@Autowired
