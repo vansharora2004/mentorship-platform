@@ -36,6 +36,7 @@ import com.mentorship.exception.BookingConflictException;
 import com.mentorship.repository.AvailabilityRepository;
 import com.mentorship.repository.BookingRepository;
 import com.mentorship.repository.MentorProfileRepository;
+import com.mentorship.repository.SessionRepository;
 import com.mentorship.repository.UserRepository;
 
 /**
@@ -71,6 +72,9 @@ class BookingConcurrencyTest {
 	@Autowired
 	private BookingRepository bookingRepository;
 
+	@Autowired
+	private SessionRepository sessionRepository;
+
 	private TransactionTemplate transactionTemplate;
 
 	private String mentorEmail;
@@ -105,6 +109,9 @@ class BookingConcurrencyTest {
 	@AfterEach
 	void removeFixture() {
 		transactionTemplate.executeWithoutResult(status -> {
+			// Sessions first: they hold the FK to bookings.
+			bookingsForSlot().forEach(booking -> sessionRepository.findByBookingId(booking.getId())
+					.ifPresent(sessionRepository::delete));
 			bookingsForSlot().forEach(bookingRepository::delete);
 			if (slotId != null) {
 				availabilityRepository.findById(slotId).ifPresent(availabilityRepository::delete);

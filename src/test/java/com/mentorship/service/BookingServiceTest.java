@@ -28,6 +28,8 @@ import com.mentorship.entity.Booking;
 import com.mentorship.entity.BookingStatus;
 import com.mentorship.entity.MentorProfile;
 import com.mentorship.entity.Role;
+import com.mentorship.entity.Session;
+import com.mentorship.entity.SessionStatus;
 import com.mentorship.entity.User;
 import com.mentorship.exception.AvailabilityNotFoundException;
 import com.mentorship.exception.BookingConflictException;
@@ -35,6 +37,7 @@ import com.mentorship.exception.BookingNotFoundException;
 import com.mentorship.exception.InvalidBookingException;
 import com.mentorship.repository.AvailabilityRepository;
 import com.mentorship.repository.BookingRepository;
+import com.mentorship.repository.SessionRepository;
 import com.mentorship.repository.UserRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -58,6 +61,9 @@ class BookingServiceTest {
 
 	@Mock
 	private UserRepository userRepository;
+
+	@Mock
+	private SessionRepository sessionRepository;
 
 	@InjectMocks
 	private BookingService bookingService;
@@ -94,6 +100,23 @@ class BookingServiceTest {
 
 		assertThat(slot.getStatus()).isEqualTo(AvailabilityStatus.BOOKED);
 		verify(availabilityRepository).save(slot);
+	}
+
+	@Test
+	void createAlsoCreatesAScheduledSessionForTheBooking() {
+		given(userRepository.findByEmail(CANDIDATE)).willReturn(Optional.of(candidate()));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(slot(AvailabilityStatus.AVAILABLE)));
+		given(bookingRepository.save(any(Booking.class))).willAnswer(call -> call.getArgument(0));
+
+		bookingService.create(CANDIDATE, request);
+
+		ArgumentCaptor<Session> saved = ArgumentCaptor.forClass(Session.class);
+		verify(sessionRepository).save(saved.capture());
+
+		assertThat(saved.getValue().getStatus()).isEqualTo(SessionStatus.SCHEDULED);
+		assertThat(saved.getValue().getStartTime()).isEqualTo(START);
+		assertThat(saved.getValue().getEndTime()).isEqualTo(END);
+		assertThat(saved.getValue().getBooking()).isNotNull();
 	}
 
 	@Test
@@ -204,6 +227,23 @@ class BookingServiceTest {
 		assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELLED);
 		assertThat(booking.getAvailability().getStatus()).isEqualTo(AvailabilityStatus.AVAILABLE);
 		verify(bookingRepository).save(booking);
+	}
+
+	@Test
+	void cancellingAlsoCancelsTheSession() {
+		Booking booking = booking(BookingStatus.CONFIRMED);
+		given(bookingRepository.findById(1L)).willReturn(Optional.of(booking));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(booking.getAvailability()));
+
+		Session session = new Session();
+		session.setBooking(booking);
+		session.setStatus(SessionStatus.SCHEDULED);
+		given(sessionRepository.findByBookingId(1L)).willReturn(Optional.of(session));
+
+		bookingService.cancel(CANDIDATE, 1L);
+
+		assertThat(session.getStatus()).isEqualTo(SessionStatus.CANCELLED);
+		verify(sessionRepository).save(session);
 	}
 
 	@Test

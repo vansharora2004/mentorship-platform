@@ -19,10 +19,12 @@ import com.mentorship.dto.MentorProfileRequest;
 import com.mentorship.entity.AvailabilityStatus;
 import com.mentorship.entity.BookingStatus;
 import com.mentorship.entity.Role;
+import com.mentorship.entity.SessionStatus;
 import com.mentorship.entity.User;
 import com.mentorship.exception.BookingConflictException;
 import com.mentorship.repository.AvailabilityRepository;
 import com.mentorship.repository.BookingRepository;
+import com.mentorship.repository.SessionRepository;
 import com.mentorship.repository.UserRepository;
 
 // Verifies the Booking relationships and slot state transitions against PostgreSQL.
@@ -52,6 +54,9 @@ class BookingIntegrationTest {
 
 	@Autowired
 	private BookingRepository bookingRepository;
+
+	@Autowired
+	private SessionRepository sessionRepository;
 
 	private User user(String email, String name, Role role) {
 		User user = new User();
@@ -83,6 +88,51 @@ class BookingIntegrationTest {
 
 		assertThat(availabilityRepository.findById(slotId).orElseThrow().getStatus())
 				.isEqualTo(AvailabilityStatus.BOOKED);
+	}
+
+	@Test
+	void bookingCreatesAScheduledSessionInTheSameTransaction() {
+		Long slotId = slotFor("book.session@example.com");
+		user("book.sesscandidate@example.com", "Session Candidate", Role.CANDIDATE);
+
+		var booking = bookingService.create("book.sesscandidate@example.com", new BookingRequest(slotId));
+
+		var session = sessionRepository.findByBookingId(booking.id()).orElseThrow();
+
+		assertThat(session.getId()).isNotNull();
+		assertThat(session.getBooking().getId()).isEqualTo(booking.id());
+		assertThat(session.getStartTime()).isEqualTo(booking.startTime());
+		assertThat(session.getEndTime()).isEqualTo(booking.endTime());
+		assertThat(session.getStatus()).isEqualTo(SessionStatus.SCHEDULED);
+		assertThat(session.getCreatedAt()).isNotNull();
+	}
+
+	@Test
+	void cancellingABookingCancelsItsSession() {
+		Long slotId = slotFor("book.sesscancel@example.com");
+		user("book.sesscanceller@example.com", "Session Canceller", Role.CANDIDATE);
+		var booking = bookingService.create("book.sesscanceller@example.com", new BookingRequest(slotId));
+
+		bookingService.cancel("book.sesscanceller@example.com", booking.id());
+
+		assertThat(sessionRepository.findByBookingId(booking.id()).orElseThrow().getStatus())
+				.isEqualTo(SessionStatus.CANCELLED);
+	}
+
+	@Test
+	void rebookingCreatesASecondBookingWithItsOwnSession() {
+		Long slotId = slotFor("book.sessrebook@example.com");
+		user("book.sessrebooker@example.com", "Rebooker", Role.CANDIDATE);
+		var first = bookingService.create("book.sessrebooker@example.com", new BookingRequest(slotId));
+		bookingService.cancel("book.sessrebooker@example.com", first.id());
+
+		var second = bookingService.create("book.sessrebooker@example.com", new BookingRequest(slotId));
+
+		assertThat(second.id()).isNotEqualTo(first.id());
+		assertThat(sessionRepository.findByBookingId(second.id()).orElseThrow().getStatus())
+				.isEqualTo(SessionStatus.SCHEDULED);
+		assertThat(sessionRepository.findByBookingId(first.id()).orElseThrow().getStatus())
+				.isEqualTo(SessionStatus.CANCELLED);
 	}
 
 	@Test

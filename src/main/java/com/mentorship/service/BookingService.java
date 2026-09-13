@@ -14,6 +14,8 @@ import com.mentorship.entity.AvailabilityStatus;
 import com.mentorship.entity.Booking;
 import com.mentorship.entity.BookingStatus;
 import com.mentorship.entity.Role;
+import com.mentorship.entity.Session;
+import com.mentorship.entity.SessionStatus;
 import com.mentorship.entity.User;
 import com.mentorship.exception.AvailabilityNotFoundException;
 import com.mentorship.exception.BookingConflictException;
@@ -21,6 +23,7 @@ import com.mentorship.exception.BookingNotFoundException;
 import com.mentorship.exception.InvalidBookingException;
 import com.mentorship.repository.AvailabilityRepository;
 import com.mentorship.repository.BookingRepository;
+import com.mentorship.repository.SessionRepository;
 import com.mentorship.repository.UserRepository;
 
 @Service
@@ -32,11 +35,14 @@ public class BookingService {
 
 	private final UserRepository userRepository;
 
+	private final SessionRepository sessionRepository;
+
 	public BookingService(BookingRepository bookingRepository, AvailabilityRepository availabilityRepository,
-			UserRepository userRepository) {
+			UserRepository userRepository, SessionRepository sessionRepository) {
 		this.bookingRepository = bookingRepository;
 		this.availabilityRepository = availabilityRepository;
 		this.userRepository = userRepository;
+		this.sessionRepository = sessionRepository;
 	}
 
 	// The slot row is locked FOR UPDATE before its status is read, so a competing booking
@@ -66,7 +72,18 @@ public class BookingService {
 		slot.setStatus(AvailabilityStatus.BOOKED);
 		availabilityRepository.save(slot);
 
-		return BookingResponse.from(bookingRepository.save(booking));
+		Booking saved = bookingRepository.save(booking);
+
+		// Same transaction as the booking: if this fails, the booking and the slot
+		// status change roll back together.
+		Session session = new Session();
+		session.setBooking(saved);
+		session.setStartTime(saved.getStartTime());
+		session.setEndTime(saved.getEndTime());
+		session.setStatus(SessionStatus.SCHEDULED);
+		sessionRepository.save(session);
+
+		return BookingResponse.from(saved);
 	}
 
 	@Transactional(readOnly = true)
@@ -114,6 +131,12 @@ public class BookingService {
 				.orElseThrow(() -> new AvailabilityNotFoundException(booking.getAvailability().getId()));
 		slot.setStatus(AvailabilityStatus.AVAILABLE);
 		availabilityRepository.save(slot);
+
+		// Bookings created before sessions existed have none, hence ifPresent.
+		sessionRepository.findByBookingId(booking.getId()).ifPresent(session -> {
+			session.setStatus(SessionStatus.CANCELLED);
+			sessionRepository.save(session);
+		});
 
 		bookingRepository.save(booking);
 	}
