@@ -47,6 +47,21 @@ public class GlobalExceptionHandler {
 		return build(HttpStatus.BAD_REQUEST, ex.getMessage());
 	}
 
+	@ExceptionHandler(BookingNotFoundException.class)
+	public ResponseEntity<ErrorResponse> handleBookingNotFound(BookingNotFoundException ex) {
+		return build(HttpStatus.NOT_FOUND, ex.getMessage());
+	}
+
+	@ExceptionHandler(BookingConflictException.class)
+	public ResponseEntity<ErrorResponse> handleBookingConflict(BookingConflictException ex) {
+		return build(HttpStatus.CONFLICT, ex.getMessage());
+	}
+
+	@ExceptionHandler(InvalidBookingException.class)
+	public ResponseEntity<ErrorResponse> handleInvalidBooking(InvalidBookingException ex) {
+		return build(HttpStatus.BAD_REQUEST, ex.getMessage());
+	}
+
 	// Concurrent registrations that pass the pre-check are stopped by the unique constraint.
 	@ExceptionHandler(DataIntegrityViolationException.class)
 	public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {

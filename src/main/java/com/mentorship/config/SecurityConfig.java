@@ -43,6 +43,8 @@ public class SecurityConfig {
 						.requestMatchers(HttpMethod.GET, "/api/mentors", "/api/mentors/*",
 								"/api/mentors/*/availability").authenticated()
 						.requestMatchers("/api/availability/**").hasRole("MENTOR")
+						// Mentors read bookings made against their slots; only candidates create or cancel.
+						.requestMatchers(HttpMethod.GET, "/api/bookings", "/api/bookings/*").authenticated()
 						.requestMatchers("/api/bookings/**").hasRole("CANDIDATE")
 						.anyRequest().authenticated())
 				.exceptionHandling(handling -> handling
