@@ -39,12 +39,13 @@ public class BookingService {
 		this.userRepository = userRepository;
 	}
 
-	// Phase 6 checks slot state without locking; concurrent callers are Phase 7's problem.
+	// The slot row is locked FOR UPDATE before its status is read, so a competing booking
+	// blocks here and re-reads the committed status once this transaction ends.
 	@Transactional
 	public BookingResponse create(String candidateEmail, BookingRequest request) {
 		User candidate = userRepository.findByEmail(candidateEmail).orElseThrow();
 
-		Availability slot = availabilityRepository.findById(request.availabilityId())
+		Availability slot = availabilityRepository.findByIdForUpdate(request.availabilityId())
 				.orElseThrow(() -> new AvailabilityNotFoundException(request.availabilityId()));
 
 		if (slot.getStatus() != AvailabilityStatus.AVAILABLE) {
@@ -108,7 +109,9 @@ public class BookingService {
 
 		booking.setStatus(BookingStatus.CANCELLED);
 
-		Availability slot = booking.getAvailability();
+		// Locked for the same reason as create: every slot-status mutation is serialised.
+		Availability slot = availabilityRepository.findByIdForUpdate(booking.getAvailability().getId())
+				.orElseThrow(() -> new AvailabilityNotFoundException(booking.getAvailability().getId()));
 		slot.setStatus(AvailabilityStatus.AVAILABLE);
 		availabilityRepository.save(slot);
 

@@ -67,7 +67,7 @@ class BookingServiceTest {
 	@Test
 	void createsConfirmedBookingForTheAuthenticatedCandidate() {
 		given(userRepository.findByEmail(CANDIDATE)).willReturn(Optional.of(candidate()));
-		given(availabilityRepository.findById(10L)).willReturn(Optional.of(slot(AvailabilityStatus.AVAILABLE)));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(slot(AvailabilityStatus.AVAILABLE)));
 		given(bookingRepository.save(any(Booking.class))).willAnswer(call -> call.getArgument(0));
 
 		BookingResponse response = bookingService.create(CANDIDATE, request);
@@ -87,7 +87,7 @@ class BookingServiceTest {
 	void bookingMarksTheSlotAsBooked() {
 		Availability slot = slot(AvailabilityStatus.AVAILABLE);
 		given(userRepository.findByEmail(CANDIDATE)).willReturn(Optional.of(candidate()));
-		given(availabilityRepository.findById(10L)).willReturn(Optional.of(slot));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(slot));
 		given(bookingRepository.save(any(Booking.class))).willAnswer(call -> call.getArgument(0));
 
 		bookingService.create(CANDIDATE, request);
@@ -99,7 +99,7 @@ class BookingServiceTest {
 	@Test
 	void createFailsWhenTheSlotDoesNotExist() {
 		given(userRepository.findByEmail(CANDIDATE)).willReturn(Optional.of(candidate()));
-		given(availabilityRepository.findById(10L)).willReturn(Optional.empty());
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
 		assertThatExceptionOfType(AvailabilityNotFoundException.class)
 				.isThrownBy(() -> bookingService.create(CANDIDATE, request));
@@ -110,7 +110,7 @@ class BookingServiceTest {
 	@Test
 	void createFailsWhenTheSlotIsAlreadyBooked() {
 		given(userRepository.findByEmail(CANDIDATE)).willReturn(Optional.of(candidate()));
-		given(availabilityRepository.findById(10L)).willReturn(Optional.of(slot(AvailabilityStatus.BOOKED)));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(slot(AvailabilityStatus.BOOKED)));
 
 		assertThatExceptionOfType(BookingConflictException.class)
 				.isThrownBy(() -> bookingService.create(CANDIDATE, request));
@@ -121,7 +121,7 @@ class BookingServiceTest {
 	@Test
 	void createFailsWhenTheSlotIsBlocked() {
 		given(userRepository.findByEmail(CANDIDATE)).willReturn(Optional.of(candidate()));
-		given(availabilityRepository.findById(10L)).willReturn(Optional.of(slot(AvailabilityStatus.BLOCKED)));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(slot(AvailabilityStatus.BLOCKED)));
 
 		assertThatExceptionOfType(BookingConflictException.class)
 				.isThrownBy(() -> bookingService.create(CANDIDATE, request));
@@ -134,7 +134,7 @@ class BookingServiceTest {
 		past.setEndTime(Instant.now().minus(1, ChronoUnit.HOURS));
 
 		given(userRepository.findByEmail(CANDIDATE)).willReturn(Optional.of(candidate()));
-		given(availabilityRepository.findById(10L)).willReturn(Optional.of(past));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(past));
 
 		assertThatExceptionOfType(InvalidBookingException.class)
 				.isThrownBy(() -> bookingService.create(CANDIDATE, request));
@@ -197,6 +197,7 @@ class BookingServiceTest {
 		Booking booking = booking(BookingStatus.CONFIRMED);
 		booking.getAvailability().setStatus(AvailabilityStatus.BOOKED);
 		given(bookingRepository.findById(1L)).willReturn(Optional.of(booking));
+		given(availabilityRepository.findByIdForUpdate(10L)).willReturn(Optional.of(booking.getAvailability()));
 
 		bookingService.cancel(CANDIDATE, 1L);
 
