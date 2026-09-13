@@ -40,7 +40,8 @@ public class SecurityConfig {
 						.requestMatchers("/api/auth/register", "/api/auth/login", "/api/health").permitAll()
 						// Must precede the GET rule below, which would otherwise match /api/mentors/profile.
 						.requestMatchers("/api/mentors/profile").hasRole("MENTOR")
-						.requestMatchers(HttpMethod.GET, "/api/mentors", "/api/mentors/*").authenticated()
+						.requestMatchers(HttpMethod.GET, "/api/mentors", "/api/mentors/*",
+								"/api/mentors/*/availability").authenticated()
 						.requestMatchers("/api/availability/**").hasRole("MENTOR")
 						.requestMatchers("/api/bookings/**").hasRole("CANDIDATE")
 						.anyRequest().authenticated())

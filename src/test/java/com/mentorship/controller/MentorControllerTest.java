@@ -34,8 +34,11 @@ import com.mentorship.entity.Role;
 import com.mentorship.exception.MentorProfileAlreadyExistsException;
 import com.mentorship.exception.MentorProfileNotFoundException;
 import com.mentorship.exception.GlobalExceptionHandler;
+import com.mentorship.dto.AvailabilityResponse;
+import com.mentorship.entity.AvailabilityStatus;
 import com.mentorship.security.JwtService;
 import com.mentorship.security.SecurityErrorHandler;
+import com.mentorship.service.AvailabilityService;
 import com.mentorship.service.MentorService;
 
 @WebMvcTest(controllers = MentorController.class)
@@ -57,6 +60,9 @@ class MentorControllerTest {
 
 	@MockitoBean
 	private MentorService mentorService;
+
+	@MockitoBean
+	private AvailabilityService availabilityService;
 
 	private String mentor() {
 		return "Bearer " + jwtService.generateToken("mentor@example.com", Role.MENTOR);
@@ -223,6 +229,24 @@ class MentorControllerTest {
 	@Test
 	void anonymousCannotSearchMentors() throws Exception {
 		mockMvc.perform(get("/api/mentors"))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void candidateCanViewAMentorsAvailability() throws Exception {
+		given(availabilityService.listForMentor(7L)).willReturn(List.of(new AvailabilityResponse(1L, 7L,
+				Instant.parse("2030-01-01T10:00:00Z"), Instant.parse("2030-01-01T11:00:00Z"),
+				AvailabilityStatus.AVAILABLE, Instant.now())));
+
+		mockMvc.perform(get("/api/mentors/7/availability").header("Authorization", candidate()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].id").value(1))
+				.andExpect(jsonPath("$[0].mentorId").value(7));
+	}
+
+	@Test
+	void anonymousCannotViewMentorAvailability() throws Exception {
+		mockMvc.perform(get("/api/mentors/7/availability"))
 				.andExpect(status().isUnauthorized());
 	}
 

@@ -1,6 +1,7 @@
 package com.mentorship.controller;
 
 import java.security.Principal;
+import java.util.List;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -16,9 +17,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.mentorship.dto.AvailabilityResponse;
 import com.mentorship.dto.MentorProfileRequest;
 import com.mentorship.dto.MentorProfileResponse;
 import com.mentorship.dto.PageResponse;
+import com.mentorship.service.AvailabilityService;
 import com.mentorship.service.MentorService;
 
 import jakarta.validation.Valid;
@@ -29,8 +32,11 @@ public class MentorController {
 
 	private final MentorService mentorService;
 
-	public MentorController(MentorService mentorService) {
+	private final AvailabilityService availabilityService;
+
+	public MentorController(MentorService mentorService, AvailabilityService availabilityService) {
 		this.mentorService = mentorService;
+		this.availabilityService = availabilityService;
 	}
 
 	@GetMapping
@@ -67,6 +73,11 @@ public class MentorController {
 	@GetMapping("/{mentorId}")
 	public MentorProfileResponse getByMentorId(@PathVariable Long mentorId) {
 		return mentorService.getByMentorId(mentorId);
+	}
+
+	@GetMapping("/{mentorId}/availability")
+	public List<AvailabilityResponse> getAvailability(@PathVariable Long mentorId) {
+		return availabilityService.listForMentor(mentorId);
 	}
 
 }

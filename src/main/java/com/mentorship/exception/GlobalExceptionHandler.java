@@ -13,6 +13,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -29,6 +30,21 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(MentorProfileAlreadyExistsException.class)
 	public ResponseEntity<ErrorResponse> handleMentorProfileAlreadyExists(MentorProfileAlreadyExistsException ex) {
 		return build(HttpStatus.CONFLICT, ex.getMessage());
+	}
+
+	@ExceptionHandler(AvailabilityNotFoundException.class)
+	public ResponseEntity<ErrorResponse> handleAvailabilityNotFound(AvailabilityNotFoundException ex) {
+		return build(HttpStatus.NOT_FOUND, ex.getMessage());
+	}
+
+	@ExceptionHandler(AvailabilityConflictException.class)
+	public ResponseEntity<ErrorResponse> handleAvailabilityConflict(AvailabilityConflictException ex) {
+		return build(HttpStatus.CONFLICT, ex.getMessage());
+	}
+
+	@ExceptionHandler(InvalidAvailabilityException.class)
+	public ResponseEntity<ErrorResponse> handleInvalidAvailability(InvalidAvailabilityException ex) {
+		return build(HttpStatus.BAD_REQUEST, ex.getMessage());
 	}
 
 	// Concurrent registrations that pass the pre-check are stopped by the unique constraint.
