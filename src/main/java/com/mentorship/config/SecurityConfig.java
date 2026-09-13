@@ -38,8 +38,9 @@ public class SecurityConfig {
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/api/auth/register", "/api/auth/login", "/api/health").permitAll()
-						.requestMatchers(HttpMethod.GET, "/api/mentors", "/api/mentors/*").authenticated()
+						// Must precede the GET rule below, which would otherwise match /api/mentors/profile.
 						.requestMatchers("/api/mentors/profile").hasRole("MENTOR")
+						.requestMatchers(HttpMethod.GET, "/api/mentors", "/api/mentors/*").authenticated()
 						.requestMatchers("/api/availability/**").hasRole("MENTOR")
 						.requestMatchers("/api/bookings/**").hasRole("CANDIDATE")
 						.anyRequest().authenticated())

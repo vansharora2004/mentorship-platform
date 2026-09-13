@@ -21,6 +21,16 @@ public class GlobalExceptionHandler {
 		return build(HttpStatus.CONFLICT, ex.getMessage());
 	}
 
+	@ExceptionHandler(MentorProfileNotFoundException.class)
+	public ResponseEntity<ErrorResponse> handleMentorProfileNotFound(MentorProfileNotFoundException ex) {
+		return build(HttpStatus.NOT_FOUND, ex.getMessage());
+	}
+
+	@ExceptionHandler(MentorProfileAlreadyExistsException.class)
+	public ResponseEntity<ErrorResponse> handleMentorProfileAlreadyExists(MentorProfileAlreadyExistsException ex) {
+		return build(HttpStatus.CONFLICT, ex.getMessage());
+	}
+
 	// Concurrent registrations that pass the pre-check are stopped by the unique constraint.
 	@ExceptionHandler(DataIntegrityViolationException.class)
 	public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
