@@ -1082,3 +1082,146 @@ DECISION; Architecture §25 mentions Docker Compose without assigning it to a ph
   returns `Page<MentorProfileResponse>`, and `PageImpl` has an unstable JSON shape. Caching it would
   require changing the Phase 4 service contract, which was judged out of scope. — PHASE 8 DESIGN DECISION
 - Containerising PostgreSQL, and adding RabbitMQ to Docker Compose, belong to later phases.
+
+---
+
+## Phases 9–11 — as-built record
+
+Same labelling convention as the Phase 8 record above: **DOCUMENTED REQUIREMENT**,
+**PHASE 9–11 DESIGN DECISION**, **IMPLEMENTATION ASSUMPTION**.
+
+### Phase 9 — RabbitMQ
+
+| Statement | Classification |
+|---|---|
+| Notification processing happens outside the main request path | DOCUMENTED REQUIREMENT (Implementation Phase 9) |
+| Initial events: BOOKING_CREATED, BOOKING_CANCELLED, SESSION_REMINDER | DOCUMENTED REQUIREMENT |
+| Booking must not wait on, or be rolled back by, notification delivery | DOCUMENTED REQUIREMENT (Edge Cases §10) |
+| Failed messages retried, then dead-lettered | DOCUMENTED REQUIREMENT (Edge Cases §10) |
+| Consumers are idempotent | DOCUMENTED REQUIREMENT (Edge Cases §10) |
+| Topic exchange `mentorship.events`, queue `notification.queue`, DLQ `notification.dlq` | PHASE 9–11 DESIGN DECISION |
+| Routing key `notification.<event type>` | PHASE 9–11 DESIGN DECISION |
+| A `notifications` table records each delivered notification | PHASE 9–11 DESIGN DECISION |
+| The notification event is recoverable after a broker outage | DOCUMENTED REQUIREMENT (Edge Cases §10) |
+| Transactional outbox (`outbox_events`) as the recovery mechanism | PHASE 9–11 DESIGN DECISION |
+
+**Notification delivery uses a transactional outbox.** `BookingService` and `SessionReminderJob`
+raise a Spring application event; `NotificationEventRelay` handles it in two separate steps.
+
+| Step | Phase | What happens |
+|---|---|---|
+| Record | `BEFORE_COMMIT` | The event is written to `outbox_events` as PENDING **inside** the originating transaction |
+| Publish | `AFTER_COMMIT` | The event is sent to RabbitMQ and the row marked SENT; a failure leaves it PENDING |
+| Retry | `OutboxRetryJob`, every minute | PENDING rows past a grace period are republished, oldest first |
+
+Between them these satisfy **both** halves of Edge Cases {S}10 "RabbitMQ unavailable":
+
+- *"The booking transaction should not incorrectly be rolled back merely because notification
+  delivery failed"* {D} publishing happens after commit, so a broker outage cannot touch the
+  booking. `NotificationPublisher` logs and swallows `AmqpException`, returning false.
+- *"The notification event should be recoverable"* {D} the event is already committed to the outbox
+  before any broker call is attempted, so an outage cannot lose it. It stays PENDING until a later
+  attempt succeeds.
+
+A rolled-back booking leaves no outbox row and publishes nothing, because neither listener fires.
+Recording is `Propagation.MANDATORY`: if it were ever called outside a transaction the guarantee
+would be gone, and failing loudly is better than recording an event that might not commit with the
+operation that caused it. Services depend only on `ApplicationEventPublisher` and never import AMQP
+or outbox types.
+
+**The retry never gives up.** There is no attempt limit; `attempts` and `lastAttemptAt` are recorded
+for visibility only. While the broker is down events accumulate as PENDING, and once it returns they
+are delivered in the order they occurred. Re-running the job is safe: only PENDING rows are
+selected, so a delivered event is never republished, and publishing the same event twice would be
+harmless anyway because the consumer deduplicates on (`eventId`, `recipientId`). A batch stops at
+the first failure rather than hammering an unreachable broker.
+
+**Idempotency** is keyed on (`eventId`, `recipientId`). Event ids are derived, not random
+(`BOOKING_CREATED:1001`, `SESSION_REMINDER:42`), so a redelivered message produces the
+same id and hits the unique constraint instead of a second notification. A pre-check keeps the
+common path cheap; the caught `DataIntegrityViolationException` covers two deliveries racing.
+
+**Note on the documented payload example.** Architecture §18 shows `"eventType":
+"BOOKING_CONFIRMED"` while the event list specifies `BOOKING_CREATED`. `BOOKING_CREATED` is
+implemented, as the explicit Phase 9 event list takes precedence over the illustrative payload.
+
+### Phase 10 — Scheduler
+
+| Statement | Classification |
+|---|---|
+| Spring Scheduler automates periodic background operations | DOCUMENTED REQUIREMENT |
+| Initial scheduler is session reminders | DOCUMENTED REQUIREMENT (Implementation Phase 10) |
+| Updating session states | DOCUMENTED REQUIREMENT (Project Statement §13) |
+| Jobs continue correctly after restart; missed ticks recoverable | DOCUMENTED REQUIREMENT (Edge Cases §11) |
+| Reminder lead time of 15 minutes | IMPLEMENTATION ASSUMPTION — a lead time is required, the value is not |
+| Completing a session also completes its CONFIRMED booking | PHASE 9–11 DESIGN DECISION |
+| `Session.reminderSentAt` column added | PHASE 9–11 DESIGN DECISION (additive; no DTO or API exposes it) |
+
+Three jobs run, each every minute:
+
+- `SessionReminderJob` emits SESSION_REMINDER for sessions starting within the lead time.
+- `SessionStatusJob` advances SCHEDULED to ACTIVE to COMPLETED as time passes.
+- `OutboxRetryJob` republishes notification events RabbitMQ never acknowledged (see Phase 9).
+
+All three are idempotent and select only rows still in an open state, so a restart, a missed tick,
+or a second instance changes nothing further — a session whose whole window elapsed during downtime
+is carried straight to COMPLETED by the next run, and an event already delivered is never
+republished.
+
+**Availability cleanup is deferred.** "Expire old availability" appears in Implementation Phase 10
+only under *"Other possible scheduled tasks"*, and implementing it would require a new
+`AvailabilityStatus` value. That value is returned by the Phase 5 API and would additionally make
+past slots non-updatable and non-deletable, because `AvailabilityService` guards those operations
+with `status != AVAILABLE`. Changing a concretely specified API for an explicitly optional job was
+judged out of scope.
+
+**Duplicate execution across instances** is not prevented by a distributed lock, matching the
+documents, which describe that as a later concern. The exposure is bounded: reminder event ids are
+derived from the session id, so the idempotent consumer still yields exactly one notification per
+recipient even if two instances publish. Distributed locking remains future work.
+
+### Phase 11 — WebSocket + STOMP chat
+
+| Statement | Classification |
+|---|---|
+| Connect `/ws`, send `/app/chat/{sessionId}`, subscribe `/topic/session/{sessionId}` | DOCUMENTED REQUIREMENT |
+| User authenticated, belongs to the session, session active, content valid | DOCUMENTED REQUIREMENT (Implementation Phase 11) |
+| Cannot join a private chat by changing `sessionId` | DOCUMENTED REQUIREMENT (Edge Cases §12) |
+| Empty, oversized, or malformed messages rejected | DOCUMENTED REQUIREMENT (Edge Cases §12) |
+| Chat history persisted in PostgreSQL | DOCUMENTED REQUIREMENT (optional in the data model; implemented) |
+| Maximum message length 2000 characters | IMPLEMENTATION ASSUMPTION |
+| "Open for chat" means SCHEDULED or ACTIVE | PHASE 9–11 DESIGN DECISION |
+| `GET /api/sessions/{sessionId}/messages` returns a transcript | PHASE 9–11 DESIGN DECISION (new endpoint; no existing contract changed) |
+
+`/topic/session/{sessionId}` is used consistently, resolving the alternative
+`/topic/sessions/{id}/chat` named in Architecture §21 as this document asks.
+
+**Authentication travels on the STOMP CONNECT frame**, not the HTTP handshake, because a browser
+WebSocket cannot set an Authorization header. `StompAuthChannelInterceptor` validates the JWT on
+CONNECT and attaches the principal; `/ws/**` is therefore permitted in the REST filter chain, which
+is a relocation of the check rather than an absence of one.
+
+**SUBSCRIBE is authorised per session id.** The interceptor extracts the id from the destination and
+verifies membership. A destination-pattern check alone would let any authenticated user read any
+session by editing the number. Rejections are returned to the offending client on
+`/user/queue/errors` rather than broadcast.
+
+A completed or cancelled session rejects new messages but still serves its transcript, so history
+survives the session ending.
+
+### Infrastructure
+
+`docker-compose.yml` now provides **Redis and RabbitMQ** (`docker compose up -d`);
+management UI on `http://localhost:15672`. PostgreSQL remains a native local installation.
+
+The Phase 10 timer is disabled during tests through a surefire system property
+(`app.scheduler.enabled=false`), and the job methods are invoked directly instead. Left enabled the
+jobs would mutate other tests' fixtures from a background thread, and asserting on a timer would
+mean sleeping. The `@ConditionalOnProperty` gate defaults to enabled, so production is unaffected.
+
+### Deferred
+
+- Availability cleanup / expired-booking jobs (see Phase 10 above).
+- Distributed scheduler locking for multi-instance deployment.
+- A broker relay in place of the in-memory STOMP broker, needed before running several instances.
+- Purging or archiving SENT outbox rows; they are retained indefinitely as an audit trail.

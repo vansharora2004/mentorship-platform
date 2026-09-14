@@ -38,6 +38,10 @@ public class SecurityConfig {
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/api/auth/register", "/api/auth/login", "/api/health").permitAll()
+						// The STOMP handshake carries no Authorization header. Authentication happens
+						// on the CONNECT frame instead - see StompAuthChannelInterceptor - so the
+						// handshake itself is permitted here rather than left unauthenticated overall.
+						.requestMatchers("/ws/**").permitAll()
 						// Must precede the GET rule below, which would otherwise match /api/mentors/profile.
 						.requestMatchers("/api/mentors/profile").hasRole("MENTOR")
 						.requestMatchers(HttpMethod.GET, "/api/mentors", "/api/mentors/*",
@@ -46,6 +50,9 @@ public class SecurityConfig {
 						// Mentors read bookings made against their slots; only candidates create or cancel.
 						.requestMatchers(HttpMethod.GET, "/api/bookings", "/api/bookings/*").authenticated()
 						.requestMatchers("/api/bookings/**").hasRole("CANDIDATE")
+						// Either participant may read their own session transcript; ChatService
+						// enforces which sessions that actually means.
+						.requestMatchers(HttpMethod.GET, "/api/sessions/*/messages").authenticated()
 						.anyRequest().authenticated())
 				.exceptionHandling(handling -> handling
 						.authenticationEntryPoint(securityErrorHandler)

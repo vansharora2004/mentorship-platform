@@ -42,6 +42,11 @@ public class Session {
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;
 
+	// Null until the reminder scheduler has emitted SESSION_REMINDER for this session.
+	// Additive: no API or DTO exposes it; it exists so a reminder is sent once per session.
+	@Column(name = "reminder_sent_at")
+	private Instant reminderSentAt;
+
 	@PrePersist
 	void onCreate() {
 		if (createdAt == null) {
@@ -98,6 +103,14 @@ public class Session {
 
 	public void setCreatedAt(Instant createdAt) {
 		this.createdAt = createdAt;
+	}
+
+	public Instant getReminderSentAt() {
+		return reminderSentAt;
+	}
+
+	public void setReminderSentAt(Instant reminderSentAt) {
+		this.reminderSentAt = reminderSentAt;
 	}
 
 }

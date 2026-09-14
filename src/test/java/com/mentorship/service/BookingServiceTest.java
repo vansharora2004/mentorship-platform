@@ -18,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
 
 import com.mentorship.config.CacheEvictor;
@@ -68,6 +69,12 @@ class BookingServiceTest {
 
 	@Mock
 	private CacheEvictor cacheEvictor;
+
+	// Phase 9: booking now announces BOOKING_CREATED / BOOKING_CANCELLED through Spring's event
+	// publisher. NotificationEventRelay forwards them to RabbitMQ only after commit, so these unit
+	// tests stay broker-free and simply record that the announcement was made.
+	@Mock
+	private ApplicationEventPublisher eventPublisher;
 
 	@InjectMocks
 	private BookingService bookingService;

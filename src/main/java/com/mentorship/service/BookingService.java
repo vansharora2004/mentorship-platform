@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +20,7 @@ import com.mentorship.entity.Role;
 import com.mentorship.entity.Session;
 import com.mentorship.entity.SessionStatus;
 import com.mentorship.entity.User;
+import com.mentorship.event.NotificationEvent;
 import com.mentorship.exception.AvailabilityNotFoundException;
 import com.mentorship.exception.BookingConflictException;
 import com.mentorship.exception.BookingNotFoundException;
@@ -41,13 +43,17 @@ public class BookingService {
 
 	private final CacheEvictor cacheEvictor;
 
+	private final ApplicationEventPublisher eventPublisher;
+
 	public BookingService(BookingRepository bookingRepository, AvailabilityRepository availabilityRepository,
-			UserRepository userRepository, SessionRepository sessionRepository, CacheEvictor cacheEvictor) {
+			UserRepository userRepository, SessionRepository sessionRepository, CacheEvictor cacheEvictor,
+			ApplicationEventPublisher eventPublisher) {
 		this.bookingRepository = bookingRepository;
 		this.availabilityRepository = availabilityRepository;
 		this.userRepository = userRepository;
 		this.sessionRepository = sessionRepository;
 		this.cacheEvictor = cacheEvictor;
+		this.eventPublisher = eventPublisher;
 	}
 
 	// The slot row is locked FOR UPDATE before its status is read, so a competing booking
@@ -89,6 +95,11 @@ public class BookingService {
 		session.setEndTime(saved.getEndTime());
 		session.setStatus(SessionStatus.SCHEDULED);
 		sessionRepository.save(session);
+
+		// Handed to RabbitMQ only after this transaction commits; the booking never waits on,
+		// nor is rolled back by, notification delivery. See NotificationEventRelay.
+		eventPublisher.publishEvent(NotificationEvent.bookingCreated(saved.getId(), candidate.getId(),
+				saved.getMentor().getId()));
 
 		return BookingResponse.from(saved);
 	}
@@ -149,6 +160,9 @@ public class BookingService {
 
 		// Booking stores the mentor directly, so no traversal or extra query is needed.
 		cacheEvictor.evictAvailability(booking.getMentor().getId());
+
+		eventPublisher.publishEvent(NotificationEvent.bookingCancelled(booking.getId(),
+				booking.getCandidate().getId(), booking.getMentor().getId()));
 	}
 
 	private boolean isParticipant(Booking booking, String email) {

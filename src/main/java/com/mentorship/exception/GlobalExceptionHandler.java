@@ -62,6 +62,16 @@ public class GlobalExceptionHandler {
 		return build(HttpStatus.BAD_REQUEST, ex.getMessage());
 	}
 
+	@ExceptionHandler(SessionNotFoundException.class)
+	public ResponseEntity<ErrorResponse> handleSessionNotFound(SessionNotFoundException ex) {
+		return build(HttpStatus.NOT_FOUND, ex.getMessage());
+	}
+
+	@ExceptionHandler(InvalidChatMessageException.class)
+	public ResponseEntity<ErrorResponse> handleInvalidChatMessage(InvalidChatMessageException ex) {
+		return build(HttpStatus.BAD_REQUEST, ex.getMessage());
+	}
+
 	// Concurrent registrations that pass the pre-check are stopped by the unique constraint.
 	@ExceptionHandler(DataIntegrityViolationException.class)
 	public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
