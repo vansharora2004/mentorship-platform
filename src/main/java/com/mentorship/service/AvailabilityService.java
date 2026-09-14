@@ -3,10 +3,13 @@ package com.mentorship.service;
 import java.time.Instant;
 import java.util.List;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.mentorship.config.CacheEvictor;
 import com.mentorship.dto.AvailabilityRequest;
 import com.mentorship.dto.AvailabilityResponse;
 import com.mentorship.entity.Availability;
@@ -26,12 +29,16 @@ public class AvailabilityService {
 
 	private final MentorProfileRepository mentorProfileRepository;
 
+	private final CacheEvictor cacheEvictor;
+
 	public AvailabilityService(AvailabilityRepository availabilityRepository,
-			MentorProfileRepository mentorProfileRepository) {
+			MentorProfileRepository mentorProfileRepository, CacheEvictor cacheEvictor) {
 		this.availabilityRepository = availabilityRepository;
 		this.mentorProfileRepository = mentorProfileRepository;
+		this.cacheEvictor = cacheEvictor;
 	}
 
+	@CacheEvict(cacheNames = CacheEvictor.AVAILABILITY_CACHE, key = "#result.mentorId()")
 	@Transactional
 	public AvailabilityResponse create(String email, AvailabilityRequest request) {
 		MentorProfile profile = ownProfile(email);
@@ -58,6 +65,7 @@ public class AvailabilityService {
 				.toList();
 	}
 
+	@Cacheable(cacheNames = CacheEvictor.AVAILABILITY_CACHE, key = "#mentorId")
 	@Transactional(readOnly = true)
 	public List<AvailabilityResponse> listForMentor(Long mentorId) {
 		return availabilityRepository.findByMentorProfileUserIdOrderByStartTimeAsc(mentorId)
@@ -66,6 +74,7 @@ public class AvailabilityService {
 				.toList();
 	}
 
+	@CacheEvict(cacheNames = CacheEvictor.AVAILABILITY_CACHE, key = "#result.mentorId()")
 	@Transactional
 	public AvailabilityResponse update(String email, Long availabilityId, AvailabilityRequest request) {
 		Availability slot = ownedSlot(email, availabilityId);
@@ -91,7 +100,12 @@ public class AvailabilityService {
 			throw AvailabilityConflictException.notModifiable();
 		}
 
+		// Already loaded by ownedSlot, so this costs no extra query.
+		Long mentorId = slot.getMentorProfile().getUser().getId();
+
 		availabilityRepository.delete(slot);
+
+		cacheEvictor.evictAvailability(mentorId);
 	}
 
 	private MentorProfile ownProfile(String email) {

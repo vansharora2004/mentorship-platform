@@ -1,0 +1,19 @@
+# Redis only. PostgreSQL is intentionally NOT containerised - the existing native
+# instance stays the source of truth. RabbitMQ arrives in Phase 9.
+#
+#   docker compose up -d      start Redis
+#   docker compose ps         check health
+#   docker compose down       stop
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: mentorship-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped

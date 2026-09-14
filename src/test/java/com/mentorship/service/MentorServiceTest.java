@@ -22,6 +22,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 
+import com.mentorship.config.CacheEvictor;
 import com.mentorship.dto.MentorProfileRequest;
 import com.mentorship.dto.MentorProfileResponse;
 import com.mentorship.entity.MentorProfile;
@@ -42,6 +43,9 @@ class MentorServiceTest {
 
 	@Mock
 	private UserRepository userRepository;
+
+	@Mock
+	private CacheEvictor cacheEvictor;
 
 	@InjectMocks
 	private MentorService mentorService;
@@ -110,6 +114,7 @@ class MentorServiceTest {
 		mentorService.deleteProfile(MENTOR_EMAIL);
 
 		verify(mentorProfileRepository).delete(existing);
+		verify(cacheEvictor).evictMentor(7L);
 	}
 
 	@Test

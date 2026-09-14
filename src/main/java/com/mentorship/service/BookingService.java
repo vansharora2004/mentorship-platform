@@ -3,10 +3,12 @@ package com.mentorship.service;
 import java.time.Instant;
 import java.util.List;
 
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.mentorship.config.CacheEvictor;
 import com.mentorship.dto.BookingRequest;
 import com.mentorship.dto.BookingResponse;
 import com.mentorship.entity.Availability;
@@ -37,16 +39,21 @@ public class BookingService {
 
 	private final SessionRepository sessionRepository;
 
+	private final CacheEvictor cacheEvictor;
+
 	public BookingService(BookingRepository bookingRepository, AvailabilityRepository availabilityRepository,
-			UserRepository userRepository, SessionRepository sessionRepository) {
+			UserRepository userRepository, SessionRepository sessionRepository, CacheEvictor cacheEvictor) {
 		this.bookingRepository = bookingRepository;
 		this.availabilityRepository = availabilityRepository;
 		this.userRepository = userRepository;
 		this.sessionRepository = sessionRepository;
+		this.cacheEvictor = cacheEvictor;
 	}
 
 	// The slot row is locked FOR UPDATE before its status is read, so a competing booking
 	// blocks here and re-reads the committed status once this transaction ends.
+	// Redis is only evicted afterwards; it never participates in the booking decision.
+	@CacheEvict(cacheNames = CacheEvictor.AVAILABILITY_CACHE, key = "#result.mentorId()")
 	@Transactional
 	public BookingResponse create(String candidateEmail, BookingRequest request) {
 		User candidate = userRepository.findByEmail(candidateEmail).orElseThrow();
@@ -139,6 +146,9 @@ public class BookingService {
 		});
 
 		bookingRepository.save(booking);
+
+		// Booking stores the mentor directly, so no traversal or extra query is needed.
+		cacheEvictor.evictAvailability(booking.getMentor().getId());
 	}
 
 	private boolean isParticipant(Booking booking, String email) {

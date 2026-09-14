@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 
+import com.mentorship.config.CacheEvictor;
 import com.mentorship.dto.BookingRequest;
 import com.mentorship.dto.BookingResponse;
 import com.mentorship.entity.Availability;
@@ -64,6 +65,9 @@ class BookingServiceTest {
 
 	@Mock
 	private SessionRepository sessionRepository;
+
+	@Mock
+	private CacheEvictor cacheEvictor;
 
 	@InjectMocks
 	private BookingService bookingService;
@@ -227,6 +231,7 @@ class BookingServiceTest {
 		assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELLED);
 		assertThat(booking.getAvailability().getStatus()).isEqualTo(AvailabilityStatus.AVAILABLE);
 		verify(bookingRepository).save(booking);
+		verify(cacheEvictor).evictAvailability(1L);
 	}
 
 	@Test

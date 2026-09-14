@@ -3,6 +3,8 @@ package com.mentorship.service;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -10,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import com.mentorship.config.CacheEvictor;
 import com.mentorship.dto.MentorProfileRequest;
 import com.mentorship.dto.MentorProfileResponse;
 import com.mentorship.entity.MentorProfile;
@@ -28,11 +31,16 @@ public class MentorService {
 
 	private final UserRepository userRepository;
 
-	public MentorService(MentorProfileRepository mentorProfileRepository, UserRepository userRepository) {
+	private final CacheEvictor cacheEvictor;
+
+	public MentorService(MentorProfileRepository mentorProfileRepository, UserRepository userRepository,
+			CacheEvictor cacheEvictor) {
 		this.mentorProfileRepository = mentorProfileRepository;
 		this.userRepository = userRepository;
+		this.cacheEvictor = cacheEvictor;
 	}
 
+	@CacheEvict(cacheNames = CacheEvictor.MENTOR_CACHE, key = "#result.mentorId()")
 	@Transactional
 	public MentorProfileResponse createProfile(String email, MentorProfileRequest request) {
 		User mentor = userRepository.findByEmail(email).orElseThrow();
@@ -48,6 +56,7 @@ public class MentorService {
 		return MentorProfileResponse.from(mentorProfileRepository.save(profile));
 	}
 
+	@CacheEvict(cacheNames = CacheEvictor.MENTOR_CACHE, key = "#result.mentorId()")
 	@Transactional
 	public MentorProfileResponse updateProfile(String email, MentorProfileRequest request) {
 		MentorProfile profile = ownedProfile(email);
@@ -58,7 +67,12 @@ public class MentorService {
 
 	@Transactional
 	public void deleteProfile(String email) {
-		mentorProfileRepository.delete(ownedProfile(email));
+		MentorProfile profile = ownedProfile(email);
+		Long mentorId = profile.getUser().getId();
+
+		mentorProfileRepository.delete(profile);
+
+		cacheEvictor.evictMentor(mentorId);
 	}
 
 	@Transactional(readOnly = true)
@@ -66,6 +80,7 @@ public class MentorService {
 		return MentorProfileResponse.from(ownedProfile(email));
 	}
 
+	@Cacheable(cacheNames = CacheEvictor.MENTOR_CACHE, key = "#mentorId")
 	@Transactional(readOnly = true)
 	public MentorProfileResponse getByMentorId(Long mentorId) {
 		return mentorProfileRepository.findByUserId(mentorId)

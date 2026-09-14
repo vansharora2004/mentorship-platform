@@ -22,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 
+import com.mentorship.config.CacheEvictor;
 import com.mentorship.dto.AvailabilityRequest;
 import com.mentorship.dto.AvailabilityResponse;
 import com.mentorship.entity.Availability;
@@ -52,6 +53,9 @@ class AvailabilityServiceTest {
 
 	@Mock
 	private MentorProfileRepository mentorProfileRepository;
+
+	@Mock
+	private CacheEvictor cacheEvictor;
 
 	@InjectMocks
 	private AvailabilityService availabilityService;
@@ -207,6 +211,7 @@ class AvailabilityServiceTest {
 		availabilityService.delete(OWNER, 1L);
 
 		verify(availabilityRepository).delete(existing);
+		verify(cacheEvictor).evictAvailability(7L);
 	}
 
 	@Test

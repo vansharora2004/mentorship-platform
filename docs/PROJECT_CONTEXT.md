@@ -935,3 +935,150 @@ Subscribe:   /topic/session/{sessionId}
 ## Current workspace note
 
 At the time this context file was written, the repository contained documentation and git metadata only. Java/Spring Boot implementation had not been started.
+
+---
+
+## Phase 8 — Redis caching: as-built record
+
+This section records what was actually built in Phase 8. Each entry is labelled so that
+implementation choices are never mistaken for original requirements.
+
+- **DOCUMENTED REQUIREMENT** — stated in the source specification documents.
+- **PHASE 8 DESIGN DECISION** — chosen during implementation; the documents left it open.
+- **IMPLEMENTATION ASSUMPTION** — inferred where the documents are silent.
+
+### Role of Redis
+
+| Statement | Classification |
+|---|---|
+| Redis is a caching layer beside PostgreSQL for frequently accessed reads | DOCUMENTED REQUIREMENT (Architecture §16) |
+| PostgreSQL remains the source of truth | DOCUMENTED REQUIREMENT (Reliability principle #1) |
+| Redis must never decide whether a booking is valid | DOCUMENTED REQUIREMENT (Reliability principle #2) |
+| Cache expiration and invalidation strategies must exist | DOCUMENTED REQUIREMENT (Project Statement §14) |
+| If Redis is unavailable, reads fall back to PostgreSQL | DOCUMENTED REQUIREMENT (Edge Cases §9) |
+| Spring Cache is the mechanism, with Redis as the backing store | PHASE 8 DESIGN DECISION — the documents name Redis but not the abstraction |
+| `RedisTemplate` is not used | PHASE 8 DESIGN DECISION |
+
+### Cache keys
+
+| Key | Cached read | Classification |
+|---|---|---|
+| `mentor:{mentorId}` | `MentorService.getByMentorId` | PHASE 8 DESIGN DECISION, matching the documents' illustrative `mentor:{id}` |
+| `availability:{mentorId}` | `AvailabilityService.listForMentor` | PHASE 8 DESIGN DECISION — see deviation note |
+
+**Deviation note.** Architecture §16 and this document list `availability:{mentorId}:{date}` under
+*"Potential cached data"*. The Phase 5 API `GET /api/mentors/{mentorId}/availability` is specified
+concretely and takes no date parameter. Rather than reshape a concretely specified API to match an
+illustrative cache example, the key was adapted to `availability:{mentorId}` and the cached value is
+the complete availability list the existing endpoint already returns. Every slot retains its own
+`startTime`/`endTime`, so no date information is lost. **The Phase 5 controller, service,
+repository, DTOs, and behaviour were not modified.**
+
+The Spring Cache default key format `cacheName::key` was overridden with a prefix computer so the
+Redis keys read `mentor:7` and `availability:7`. — PHASE 8 DESIGN DECISION
+
+### TTL
+
+| Cache | TTL | Classification |
+|---|---|---|
+| `mentor` | 10 minutes (`app.cache.mentor-ttl`) | IMPLEMENTATION ASSUMPTION — expiration is required, the value is not specified |
+| `availability` | 2 minutes (`app.cache.availability-ttl`) | IMPLEMENTATION ASSUMPTION — shorter because slot state changes on every booking |
+
+TTL is a backstop, not the primary mechanism: explicit eviction covers every known write path.
+
+### Invalidation
+
+| Trigger | Evicts | Classification |
+|---|---|---|
+| Mentor profile create / update / delete | `mentor:{mentorId}` | DOCUMENTED REQUIREMENT |
+| Availability create / update / delete | `availability:{mentorId}` | DOCUMENTED REQUIREMENT |
+| Booking create / cancel | `availability:{mentorId}` | DOCUMENTED REQUIREMENT ("booking changes") |
+
+Methods returning the affected resource evict via `@CacheEvict(key = "#result.mentorId()")`.
+Methods returning `void` (`MentorService.deleteProfile`, `AvailabilityService.delete`,
+`BookingService.cancel`) delegate to the `CacheEvictor` helper bean, because `@CacheEvict` SpEL can
+reach method arguments and `#result` but never a local variable. The mentor id is taken from an
+entity the method has already loaded, so no extra query is issued, and `allEntries = true` is
+deliberately avoided so one mentor's change never flushes another's cache. — PHASE 8 DESIGN DECISION
+
+Eviction happens when the annotated method returns, **not** after transaction commit. Transaction-aware
+eviction (`RedisCacheManager.builder(...).transactionAware()`) was implemented first and then removed:
+because every cached method is also `@Transactional`, that decorator defers puts and evicts into
+`afterCommit` callbacks that run outside the cache interceptor, where a callback that does not fire
+loses the write silently — no exception and nothing for `CacheErrorHandler` to report. The
+residual trade-off is a narrow window in which a concurrent read
+can repopulate the cache from pre-commit state; it is bounded by the 2-minute availability TTL and
+cannot affect correctness, because the booking decision never reads the cache. — PHASE 8 DESIGN
+DECISION (transaction-aware eviction was an implementation inference, never a documented requirement)
+
+
+### Write ordering: `immediateWrites()`
+
+The cache manager is built on a cache writer configured with `immediateWrites()`:
+
+```java
+RedisCacheWriter cacheWriter = RedisCacheWriter.create(connectionFactory,
+        RedisCacheWriter.RedisCacheWriterConfigurer::immediateWrites);
+```
+
+This is required for **correctness**, not performance tuning, and must not be removed.
+
+Spring Data Redis sets `asynchronousWrites = true` by default whenever the connection factory
+implements `ReactiveRedisConnectionFactory`. `LettuceConnectionFactory` does, and Lettuce is Spring
+Boot's default Redis client, so this applies to an ordinary Boot configuration. Under that default,
+`DefaultRedisCacheWriter.put` and `.evict` hand the command to an asynchronous delegate and **discard
+the returned `CompletableFuture` without awaiting it**. The annotated method therefore returns before
+Redis has been contacted.
+
+The consequence is a lost-eviction defect: a `@Cacheable` put that has been dispatched but not yet
+flushed can arrive **after** a subsequent `@CacheEvict` for the same key, re-creating the entry it was
+supposed to remove. The cache then serves pre-write data until the TTL expires. A Redis `MONITOR`
+trace confirmed `SET` arriving after `UNLINK` for the same key, on a separate connection.
+
+This affected both caches. It surfaced first on `availability:{mentorId}` after
+`AvailabilityService.create` and `BookingService.create`; `mentor:{mentorId}` carried the identical
+defect and passed only because no write happened to land inside the race window. Booking correctness
+was never at risk, because the booking decision reads PostgreSQL under `SELECT ... FOR UPDATE` and
+never consults Redis — but a mentor's availability could be displayed incorrectly for up to the
+2-minute TTL, which Edge Cases §9 requires to be avoided.
+
+Note that `RedisCacheWriter.lockingRedisCacheWriter(...)` does **not** address this: it configures
+`enableLocking()` only and leaves asynchronous writes enabled. `immediateWrites()` is the supported
+switch. — PHASE 8 DESIGN DECISION (forced by library default behaviour; the documents do not
+discuss cache write ordering)
+
+### Booking correctness
+
+`BookingService.create` continues to read the availability row through
+`findByIdForUpdate` (`SELECT ... FOR UPDATE`) inside `@Transactional`, backed by the partial unique
+index from Phase 7. Redis is never consulted for the booking decision; the only cache interaction on
+the booking path is eviction after the fact. — DOCUMENTED REQUIREMENT
+
+### Redis failure
+
+A Spring `CacheErrorHandler` logs and swallows cache read, write, evict, and clear failures, so an
+unavailable Redis degrades to a cache miss and the call falls through to PostgreSQL. Only cache
+exceptions reach the handler, so genuine business and data-access errors still propagate. No
+try/catch for Redis appears in any service. — DOCUMENTED REQUIREMENT (Edge Cases §9); the
+`CacheErrorHandler` mechanism is a PHASE 8 DESIGN DECISION
+
+### Serialization
+
+Each cache uses a type-specific `JacksonJsonRedisSerializer` (Jackson 3, matching Spring Boot 4)
+rather than polymorphic default typing, because the DTOs are Java records and records are `final`,
+which default typing would not tag. `java.time` support is built into Jackson 3, so `Instant`
+round-trips without an extra module. No DTO or API response contract was changed.
+— PHASE 8 DESIGN DECISION
+
+### Infrastructure
+
+`docker-compose.yml` provides **Redis only** (`docker compose up -d`). PostgreSQL remains a native
+local installation and was not containerised. RabbitMQ is deferred to Phase 9. — PHASE 8 DESIGN
+DECISION; Architecture §25 mentions Docker Compose without assigning it to a phase
+
+### Deferred
+
+- **Mentor search caching** (`mentor:search:{filters}`) is **not implemented**. `MentorService.search`
+  returns `Page<MentorProfileResponse>`, and `PageImpl` has an unstable JSON shape. Caching it would
+  require changing the Phase 4 service contract, which was judged out of scope. — PHASE 8 DESIGN DECISION
+- Containerising PostgreSQL, and adding RabbitMQ to Docker Compose, belong to later phases.
